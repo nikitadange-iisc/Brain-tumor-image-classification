@@ -1,0 +1,39 @@
+# Dataset files (too large for GitHub)
+Dataset/
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Models (if large)
+*.h5
+*.hdf5
+*.keras
+*.pt
+*.pth
+*.ckpt
+
+# CSV outputs (optional - uncomment if needed)
+# *.csv
+# train_split.csv
+# val_split.csv
+# test_split.csv
