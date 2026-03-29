@@ -323,4 +323,209 @@ class EfficientNetMetricsCalculator:
             
             # Calculate IoU (Jaccard index)
             union = np.sum(pred_mask) + np.sum(true_mask) - intersection
-            iou =
+            iou = intersection / (union + 1e-7)
+            iou_scores.append(iou)
+        
+        return {
+            'mean_dice': np.mean(dice_scores),
+            'std_dice': np.std(dice_scores),
+            'mean_iou': np.mean(iou_scores),
+            'std_iou': np.std(iou_scores),
+            'dice_scores': dice_scores,
+            'iou_scores': iou_scores
+        }
+    
+    def plot_segmentation_results(self, sample_count=5, save_path='results/efficientnet/'):
+        """Visualize segmentation overlap results"""
+        os.makedirs(save_path, exist_ok=True)
+        
+        sample_indices = np.random.choice(len(self.test_generator.filenames), 
+                                         sample_count, replace=False)
+        
+        fig, axes = plt.subplots(sample_count, 4, figsize=(16, 4*sample_count))
+        
+        for row, idx in enumerate(sample_indices):
+            # Load image
+            image_path = os.path.join(self.test_generator.directory, 
+                                     self.test_generator.filenames[idx])
+            image = cv2.imread(image_path)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image_resized = cv2.resize(image, (224, 224)) / 255.0
+            
+            # Get true label
+            true_label = self.class_names[self.true_labels[idx]]
+            pred_label = self.class_names[self.pred_classes[idx]]
+            
+            # Generate heatmap
+            pred_class_idx = self.pred_classes[idx]
+            heatmap = self.generate_heatmap(image_resized, pred_class_idx)
+            
+            if heatmap is not None:
+                # Resize heatmap
+                heatmap_resized = cv2.resize(heatmap, (image.shape[1], image.shape[0]))
+                
+                # Create overlay
+                heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_resized), cv2.COLORMAP_JET)
+                overlay = cv2.addWeighted(image, 0.6, heatmap_colored, 0.4, 0)
+                
+                # Generate mask
+                pred_mask = self.create_synthetic_mask(image_resized)
+                if pred_mask is not None:
+                    pred_mask_resized = cv2.resize(pred_mask.astype(np.uint8), 
+                                                  (image.shape[1], image.shape[0]))
+                    
+                    # Create mask overlay
+                    mask_overlay = image.copy()
+                    mask_overlay[pred_mask_resized == 1] = [0, 255, 0]
+                    
+                    # Display images
+                    axes[row, 0].imshow(image)
+                    axes[row, 0].set_title(f'Original MRI\nTrue: {true_label}', fontsize=10)
+                    axes[row, 0].axis('off')
+                    
+                    axes[row, 1].imshow(heatmap_resized, cmap='jet')
+                    axes[row, 1].set_title(f'Attention Heatmap\nPred: {pred_label}', fontsize=10)
+                    axes[row, 1].axis('off')
+                    
+                    axes[row, 2].imshow(overlay)
+                    axes[row, 2].set_title('Overlay', fontsize=10)
+                    axes[row, 2].axis('off')
+                    
+                    axes[row, 3].imshow(mask_overlay)
+                    axes[row, 3].set_title(f'Tumor Segmentation Mask\nDice: {self.calculate_segmentation_metrics([image_resized], 1)["mean_dice"]:.3f}', fontsize=10)
+                    axes[row, 3].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(f'{save_path}/segmentation_visualization.png', dpi=150)
+        plt.close()
+    
+    def save_all_metrics(self, save_path='results/efficientnet/'):
+        """Save all calculated metrics to JSON"""
+        os.makedirs(save_path, exist_ok=True)
+        
+        # Get all metrics
+        classification_metrics = self.calculate_classification_metrics()
+        seg_metrics = self.calculate_segmentation_metrics(None)
+        
+        all_metrics = {
+            'model_type': 'EfficientNet',
+            'classification_metrics': classification_metrics,
+            'segmentation_metrics': {
+                'dice_coefficient': {
+                    'mean': float(seg_metrics['mean_dice']),
+                    'std': float(seg_metrics['std_dice'])
+                },
+                'iou': {
+                    'mean': float(seg_metrics['mean_iou']),
+                    'std': float(seg_metrics['std_iou'])
+                }
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open(f'{save_path}/all_metrics.json', 'w') as f:
+            json.dump(all_metrics, f, indent=2)
+        
+        return all_metrics
+
+def main():
+    parser = argparse.ArgumentParser(description='Train EfficientNet for Brain Tumor Classification')
+    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--fine_tune_epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=32)
+    args = parser.parse_args()
+    
+    print("="*60)
+    print("EFFICIENTNET MODEL FOR BRAIN TUMOR CLASSIFICATION")
+    print("="*60)
+    
+    # Download dataset
+    print("Downloading dataset from Kaggle...")
+    os.system('kaggle datasets download miadul/brain-tumor-mri-dataset')
+    os.system('unzip -q brain-tumor-mri-dataset.zip')
+    
+    dataset_path = 'brain-tumor-mri-dataset/brain_tumor_dataset'
+    
+    # Get class names
+    classes = sorted([d for d in os.listdir(dataset_path) 
+                     if os.path.isdir(os.path.join(dataset_path, d))])
+    print(f"Classes: {classes}")
+    
+    # Data generators
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=20,
+        width_shift_range=0.2,
+        height_shift_range=0.2,
+        horizontal_flip=True,
+        validation_split=0.2
+    )
+    
+    train_generator = train_datagen.flow_from_directory(
+        dataset_path, target_size=(224,224), batch_size=args.batch_size,
+        class_mode='categorical', subset='training'
+    )
+    
+    val_generator = train_datagen.flow_from_directory(
+        dataset_path, target_size=(224,224), batch_size=args.batch_size,
+        class_mode='categorical', subset='validation'
+    )
+    
+    # Create and train EfficientNet
+    eff_model = EfficientNetBrainTumorModel(num_classes=len(classes))
+    model = eff_model.build_model()
+    model = eff_model.compile_model()
+    model.summary()
+    
+    history = eff_model.train(train_generator, val_generator, 
+                             epochs=args.epochs, fine_tune_epochs=args.fine_tune_epochs)
+    
+    # Evaluate
+    evaluator = EfficientNetMetricsCalculator(model, val_generator, classes)
+    evaluator.get_predictions()
+    
+    # Generate all metrics
+    classification_metrics = evaluator.calculate_classification_metrics()
+    confusion_mat = evaluator.plot_confusion_matrix()
+    evaluator.plot_roc_curves()
+    seg_metrics = evaluator.calculate_segmentation_metrics(None)
+    evaluator.plot_segmentation_results()
+    all_metrics = evaluator.save_all_metrics()
+    
+    # Print results
+    print("\n" + "="*60)
+    print("EFFICIENTNET MODEL - FINAL RESULTS")
+    print("="*60)
+    print(f"Overall Accuracy: {classification_metrics['accuracy']:.4f}")
+    print("\nPer-Class Metrics:")
+    for class_name in classes:
+        print(f"\n{class_name}:")
+        print(f"  Precision: {classification_metrics[class_name]['precision']:.4f}")
+        print(f"  Recall: {classification_metrics[class_name]['recall']:.4f}")
+        print(f"  F1-Score: {classification_metrics[class_name]['f1-score']:.4f}")
+    
+    print("\nSegmentation Overlap Metrics:")
+    print(f"  Mean Dice Coefficient: {seg_metrics['mean_dice']:.4f}")
+    print(f"  Mean IoU (Jaccard): {seg_metrics['mean_iou']:.4f}")
+    
+    print("\nResults saved to results/efficientnet/")
+    
+    # Save training history plot
+    if isinstance(history, dict):
+        plt.figure(figsize=(12, 4))
+        plt.subplot(1, 2, 1)
+        plt.plot(history['accuracy'], label='Train')
+        plt.plot(history['val_accuracy'], label='Validation')
+        plt.title('EfficientNet Accuracy')
+        plt.legend()
+        
+        plt.subplot(1, 2, 2)
+        plt.plot(history['loss'], label='Train')
+        plt.plot(history['val_loss'], label='Validation')
+        plt.title('EfficientNet Loss')
+        plt.legend()
+        plt.savefig('results/efficientnet/training_history.png')
+        plt.close()
+
+if __name__ == '__main__':
+    main()
