@@ -1,0 +1,12 @@
+{
+  "custom_cnn": {
+    "accuracy": 0.8624288425047438,
+    "macro_f1": 0.8544156117648404,
+    "macro_roc_auc_ovr": 0.9712057603341603
+  },
+  "efficientnet_b0": {
+    "accuracy": 0.8719165085388995,
+    "macro_f1": 0.8625975988253792,
+    "macro_roc_auc_ovr": 0.979222884979305
+  }
+}
